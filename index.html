@@ -351,6 +351,91 @@ const STAGES = [
     "#.g...g.#",
     "#...G...#",
     "#########"]},
+  /* ---- 大きいフィールド(カメラがカービィを追いかける) ---- */
+  { group:"easy", name:"おおきな森の迷路", desc:"広い迷路。行き止まりに★があるよ", map:[
+    "###############",
+    "#S#*.....*#...#",
+    "#.###.#.###.#.#",
+    "#...#.#.....#.#",
+    "#.#.#.#.###.#.#",
+    "#.#.#.....#...#",
+    "#.#.###.#.#.#.#",
+    "#.......#...#.#",
+    "#.###########.#",
+    "#.............#",
+    "#.#....w....#.#",
+    "#.#.........#.#",
+    "#.#####.#####.#",
+    "#.#...#.......#",
+    "#.#.#.#######.#",
+    "#...........#.#",
+    "#########.#.#.#",
+    "#*#...#.......#",
+    "#.#.#.#.#.###.#",
+    "#............G#",
+    "###############"]},
+  { group:"easy", name:"ワドルディ村", desc:"村のワドルディたちをよけてお家へ", map:[
+    "###############",
+    "#S......#.....#",
+    "#.###...#.###.#",
+    "#.#*#.....#*#.#",
+    "#.#.#..w..#.#.#",
+    "#.....###.....#",
+    "#..w..#.#..*..#",
+    "#.....#.#.....#",
+    "###.###.###.###",
+    "#.............#",
+    "#.##..w...##..#",
+    "#.##......##*.#",
+    "#.............#",
+    "#....#####....#",
+    "#.*..#...#....#",
+    "#....#.G.#..w.#",
+    "#.............#",
+    "###############"]},
+  { group:"hard", name:"こおりの大迷宮", desc:"広い氷の通路をゴルドーとすれちがえ", map:[
+    "#############",
+    "#S~#~~#~~h~~#",
+    "#~~#~o#~~~~~#",
+    "#~~#~~#~~#~~#",
+    "#~~~~h~~~#~~#",
+    "#~~~~~~~~#~~#",
+    "#~~#######~~#",
+    "#~~h~~#~~~~~#",
+    "#~~~~~#~~~~~#",
+    "####~~#~~#~~#",
+    "#*~#~~h~~#~~#",
+    "#~~#~~~~~#~~#",
+    "#~~#######~~#",
+    "#~~~h~~*~#~~#",
+    "#~~~~~~~~#~~#",
+    "#~~#~~####~~#",
+    "#*~#~~~~~~~~#",
+    "#~~#~~~~~~~G#",
+    "#############"]},
+  { group:"hard", name:"天空のつり橋", desc:"まわりは全部穴。ゴルドーの橋をわたれ", map:[
+    "###############",
+    "#S...........*#",
+    "#ooooooooooo.o#",
+    "#ooooooooooo.o#",
+    "#oo.....v....o#",
+    "#oo.ooooovoooo#",
+    "#oo.oooooooooo#",
+    "#oo.........*o#",
+    "#oooooooooo.oo#",
+    "#oooooooooo.oo#",
+    "#*....v.....oo#",
+    "#ohooooooooooo#",
+    "#o.ooooooooooo#",
+    "#o...........o#",
+    "#ooooooovooo.o#",
+    "#ooooooooooo.o#",
+    "#oooo....v...*#",
+    "#oooo.oooooooo#",
+    "#oooo.oooooooo#",
+    "#oooo...oooooo#",
+    "#ooooooGoooooo#",
+    "###############"]},
 ];
 STAGES.forEach(s => { s.group = s.group || "normal"; });
 const GROUPS = [
@@ -648,7 +733,8 @@ function startStage(i){
     else if (ch === "B") { g.bumpers.push({ x: c + .5, y: r + .5, hit: 0 }); grid[r][c] = "."; }
     else if (ch === "g" || ch === "h" || ch === "v") {
       g.gordos.push({ kind: ch, c, r, x: c + .5, y: r + .5, ph: Math.random() * 6 });
-      grid[r][c] = (grid[r][c - 1] === "~" || grid[r][c + 1] === "~") ? "~" : ".";
+      const around = [grid[r][c - 1], grid[r][c + 1], (grid[r - 1] || [])[c], (grid[r + 1] || [])[c]];
+      grid[r][c] = around.filter(x => x === "o").length > 2 ? "o" : (grid[r][c - 1] === "~" || grid[r][c + 1] === "~") ? "~" : ".";
     }
   }
   for (const o of g.gordos) {
@@ -1022,7 +1108,7 @@ function build(g){
   board.traverse(o => { if (o.isInstancedMesh) o.dispose(); });
   board = new THREE.Group(); pivot.add(board);
   const cx = g.cols / 2, cz = g.rows / 2;
-  board.position.set(-cx, 0, -cz); pivot.position.set(cx, 0, cz);
+
 
   // 床(草・氷)と壁はインスタンスでまとめて描く
   const cellsA = [], cellsB = [], ice = [], walls = [], pits = [];
@@ -1109,10 +1195,11 @@ function build(g){
   kirby.quaternion.copy(q); board.add(kirby);
 
   // 影を落とす範囲
-  const span = Math.max(g.cols, g.rows) / 2 + 2;
+  const span = (g.cols > 9 || g.rows > 20) ? 11 : Math.max(g.cols, g.rows) / 2 + 2;
   Object.assign(sun.shadow.camera, { left: -span, right: span, top: span, bottom: -span, near: 1, far: 60 });
   sun.shadow.camera.updateProjectionMatrix();
   sun.position.set(cx - 6, 18, cz - 4); sun.target.position.set(cx, 0, cz);
+  pivot.position.set(g.x, 0, g.y); board.position.set(-g.x, 0, -g.y);   // 盤面の傾きはカービィを中心に
 
   objs = { g, R, goal, glow, stars, bumpers, enemies, gordos, kirby, lastX: g.x, lastY: g.y, faceQ: q.clone() };
   fitCamera();
@@ -1121,18 +1208,27 @@ function build(g){
 
 /* ---------- カメラ ---------- */
 let W = innerWidth, H = innerHeight;
+const PITCH = 58 * Math.PI / 180;                             // 見下ろす角度
+const camT = new THREE.Vector3(); let camBig = false, camD = 20, camHX = 4, camHZ = 8;
+function clampX(x){ const g = objs.g; return g.cols <= camHX * 2 ? g.cols / 2 : Math.max(camHX - 0.4, Math.min(g.cols - camHX + 0.4, x)); }
+function clampZ(z){ const g = objs.g; return g.rows <= camHZ * 2 ? g.rows / 2 + 0.35 : Math.max(camHZ - 0.6, Math.min(g.rows - camHZ + 1.2, z)); }
+function placeCam(){
+  camera.position.set(camT.x, Math.sin(PITCH) * camD, camT.z + Math.cos(PITCH) * camD); camera.lookAt(camT.x, 0, camT.z);
+  if (camBig) { sun.position.set(camT.x - 6, 18, camT.z - 4); sun.target.position.set(camT.x, 0, camT.z); }
+}
 function fitCamera(){
   if (!objs) return;
   const g = objs.g, aspect = W / H, vf = camera.fov * Math.PI / 180;
   camera.aspect = aspect; camera.updateProjectionMatrix();
-  const pitch = 58 * Math.PI / 180;                        // 見下ろす角度
   const hf = 2 * Math.atan(Math.tan(vf / 2) * aspect);
-  const dW = (g.cols + 1.2) / 2 / Math.tan(hf / 2);
-  const dH = (g.rows * Math.sin(pitch) + 1.5) / (2 * Math.tan(vf / 2) * 0.86);
-  const d = Math.max(dW, dH) * 1.02;
-  const tx = g.cols / 2, tz = g.rows / 2 + 0.35;
-  camera.position.set(tx, Math.sin(pitch) * d, tz + Math.cos(pitch) * d);
-  camera.lookAt(tx, 0, tz);
+  camBig = g.cols > 9 || g.rows > 20;
+  const VW = camBig ? 9.6 : g.cols;                          // 大きい盤面は横9.6マスぶんだけ映す
+  const dW = (VW + 1.2) / 2 / Math.tan(hf / 2);
+  const dH = camBig ? Math.min(13, g.rows) * Math.sin(PITCH) / (2 * Math.tan(vf / 2) * 0.86) : (g.rows * Math.sin(PITCH) + 1.5) / (2 * Math.tan(vf / 2) * 0.86);
+  camD = Math.max(dW, dH) * 1.02;
+  camHX = VW / 2; camHZ = camD * Math.tan(vf / 2) * 0.86 / Math.sin(PITCH);
+  if (camBig) camT.set(clampX(g.x), 0, clampZ(g.y)); else camT.set(g.cols / 2, 0, g.rows / 2 + 0.35);
+  placeCam();
 }
 function resize(w, h){ W = w; H = h; renderer.setSize(w, h, false); fitCamera(); }
 
@@ -1144,7 +1240,9 @@ function render(g, dt, tx, ty){
   if (!objs || objs.g !== g) build(g);
   t += dt;
   const o = objs, k = o.kirby;
-  // 盤面を少し傾けて見せる
+  // 盤面を少し傾けて見せる(カービィを中心に)
+  pivot.position.set(g.x, 0, g.y); board.position.set(-g.x, 0, -g.y);
+  if (camBig) { camT.x += (clampX(g.x) - camT.x) * Math.min(1, dt * 4); camT.z += (clampZ(g.y) - camT.z) * Math.min(1, dt * 4); placeCam(); }
   pivot.rotation.x += ((ty || 0) * 0.07 - pivot.rotation.x) * Math.min(1, dt * 8);
   pivot.rotation.z += (-(tx || 0) * 0.07 - pivot.rotation.z) * Math.min(1, dt * 8);
 
