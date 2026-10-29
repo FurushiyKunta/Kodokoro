@@ -597,7 +597,7 @@ function step(dt){
     // ワドルディ
     if (!g.inv) for (const e of g.enemies) if (Math.hypot(e.x - g.x, e.y - g.y) < R + 0.32) { miss("hit"); return; }
     // ゴルドー(無敵。トゲに触れたらミス)
-    if (!g.inv) for (const o of g.gordos) if (Math.hypot(o.x - g.x, o.y - g.y) < R + 0.33) { miss("hit"); return; }
+    if (!g.inv) for (const o of g.gordos) if (Math.hypot(o.x - g.x, o.y - g.y) < R + 0.4) { miss("hit"); return; }
     // 穴
     if (cell(Math.floor(g.x), Math.floor(g.y)) === "o") { g.fx = Math.floor(g.x) + .5; g.fy = Math.floor(g.y) + .5; miss("fall"); return; }
     // ゴール
@@ -787,17 +787,6 @@ const waddleTex = faceTex("#f07f2e", (c, w, h) => {
   for (const sd of [-1, 1]) { c.beginPath(); c.ellipse(cx + sd * w * 0.085, h * 0.585, w * 0.022, h * 0.022, 0, 0, Math.PI * 2); c.fill(); }
   c.globalAlpha = 1;
 });
-// ゴルドー: 紺色の体に、白目と黒い瞳の大きな目、上まぶた
-const gordoTex = faceTex("#27306e", (c, w, h) => {
-  const cx = w * 0.25;
-  for (const sd of [-1, 1]) {
-    const x = cx + sd * w * 0.05, y = h * 0.47;
-    c.fillStyle = "#ffffff"; c.beginPath(); c.ellipse(x, y, w * 0.032, h * 0.105, 0, 0, Math.PI * 2); c.fill();
-    c.fillStyle = "#111"; c.beginPath(); c.ellipse(x + sd * -w * 0.006, y + h * 0.02, w * 0.017, h * 0.06, 0, 0, Math.PI * 2); c.fill();
-    c.fillStyle = "#fff"; c.beginPath(); c.ellipse(x + sd * -w * 0.009, y - h * 0.005, w * 0.005, h * 0.016, 0, 0, Math.PI * 2); c.fill();
-    c.fillStyle = "#1b2150"; c.beginPath(); c.ellipse(x, y - h * 0.085, w * 0.036, h * 0.04, sd * 0.25, 0, Math.PI * 2); c.fill(); // まぶた
-  }
-});
 const M = {
   grassA: new THREE.MeshStandardMaterial({ color: "#8fd67a", roughness: 0.9 }),
   grassB: new THREE.MeshStandardMaterial({ color: "#7fcb6b", roughness: 0.9 }),
@@ -809,8 +798,12 @@ const M = {
   waddle: new THREE.MeshStandardMaterial({ map: waddleTex, roughness: 0.6 }),
   waddleArm: new THREE.MeshStandardMaterial({ color: "#f07f2e", roughness: 0.6 }),
   waddleFoot: new THREE.MeshStandardMaterial({ color: "#f6b52e", roughness: 0.55 }),
-  gordo: new THREE.MeshStandardMaterial({ map: gordoTex, roughness: 0.4 }),
-  spike: new THREE.MeshStandardMaterial({ color: "#eef1f8", roughness: 0.25, metalness: 0.35 }),
+  // ゴルドー(見本の絵に合わせる): ツヤのある藍色の体、大きな白目と藍色の瞳、くすんだ金色の角ばったトゲ
+  gordo: new THREE.MeshPhysicalMaterial({ color: "#1f1858", roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.15 }),
+  gordoEyeW: new THREE.MeshStandardMaterial({ color: "#f2f4ff", roughness: 0.3 }),
+  gordoPupil: new THREE.MeshPhysicalMaterial({ color: "#2b2390", roughness: 0.2, clearcoat: 1, emissive: "#160f50", emissiveIntensity: 0.4 }),
+  gordoShine: new THREE.MeshBasicMaterial({ color: "#ffffff" }),
+  spike: new THREE.MeshStandardMaterial({ color: "#b9ad4a", roughness: 0.32, metalness: 0.65, flatShading: true }),
   star: new THREE.MeshStandardMaterial({ color: "#f6f03e", roughness: 0.55, emissive: "#efe040", emissiveIntensity: 0.32 }),
   goal: new THREE.MeshStandardMaterial({ color: "#f8f04a", roughness: 0.5, emissive: "#f2e23c", emissiveIntensity: 0.5 }),
   bumper: new THREE.MeshStandardMaterial({ color: "#ff4f8b", roughness: 0.35 }),
@@ -884,7 +877,7 @@ const GEO = {
   bumper: new THREE.CylinderGeometry(0.34, 0.38, 0.32, 32),
   bumperBase: new THREE.CylinderGeometry(0.4, 0.42, 0.08, 32),
   bumperStar: starGeo(0.16, 0.025),
-  spike: new THREE.ConeGeometry(0.075, 0.2, 14),
+  spike: new THREE.ConeGeometry(0.068, 0.27, 7),
   pit: new THREE.PlaneGeometry(1, 1),
 };
 
@@ -946,21 +939,33 @@ function build(g){
     const feet = [-1, 1].map(sd => { const f = new THREE.Mesh(GEO.foot, M.waddleFoot); f.scale.set(0.12, 0.07, 0.17); f.position.set(sd * 0.14, 0.07, 0.03); f.castShadow = true; grp.add(f); return f; });
     grp.rotation.y = e.dir * 1.25; board.add(grp); return { grp, upper, arms, feet };
   });
-  // ゴルドー: 紺色の球に白銀のトゲ(正十二面体の向きに12本+あいだに8本)
+  // ゴルドー: 藍色の球、正面に大きな目2つ、まわりに放射状の金色のトゲ8本(見本の絵の配置)
   const gordos = g.gordos.map(() => {
     const grp = new THREE.Group(), inner = new THREE.Group(); grp.add(inner);
-    const body = new THREE.Mesh(GEO.waddle, M.gordo); body.scale.setScalar(0.26); body.castShadow = true; inner.add(body);
-    const dirs = [], phi = (1 + Math.sqrt(5)) / 2;
-    for (const [a, b] of [[1, phi], [-1, phi], [1, -phi], [-1, -phi]]) dirs.push([0, a, b], [a, b, 0], [b, 0, a]);
-    for (const sx of [-1, 1]) for (const sy of [-1, 1]) if (!(sy < 0 && sx < 0)) dirs.push([sx * 0.6, sy, 0.15]);
-    const up = new THREE.Vector3(0, 1, 0);
-    for (const d of dirs) {
-      const v = new THREE.Vector3(...d).normalize();
-      if (v.z > 0.75 && Math.abs(v.y) < 0.45) continue;              // 目の前にはトゲを出さない
-      const sp = new THREE.Mesh(GEO.spike, M.spike); sp.castShadow = true;
-      sp.quaternion.setFromUnitVectors(up, v); sp.position.copy(v.multiplyScalar(0.3)); inner.add(sp);
+    const RB = 0.25;
+    const body = new THREE.Mesh(GEO.waddle, M.gordo); body.scale.setScalar(RB); body.castShadow = true; inner.add(body);
+    // 目(白目→瞳→光の順に少しずつ前へ)。体の表面に沿わせて置く
+    for (const sd of [-1, 1]) {
+      const yaw = sd * 0.5, pitch = 0.22;
+      const dir = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
+      const eye = new THREE.Group(); eye.position.copy(dir.clone().multiplyScalar(RB * 0.93));
+      eye.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
+      const w = new THREE.Mesh(GEO.foot, M.gordoEyeW); w.scale.set(RB * 0.46, RB * 0.52, RB * 0.17);
+      const pu = new THREE.Mesh(GEO.foot, M.gordoPupil); pu.scale.set(RB * 0.33, RB * 0.37, RB * 0.13); pu.position.set(-sd * RB * 0.03, -RB * 0.03, RB * 0.075);
+      const sh = new THREE.Mesh(GEO.foot, M.gordoShine); sh.scale.set(RB * 0.085, RB * 0.085, RB * 0.04); sh.position.set(RB * 0.1, RB * 0.13, RB * 0.17);
+      eye.add(w, pu, sh); inner.add(eye);
     }
-    inner.rotation.x = -0.45;                                          // 顔を少しカメラ側へ
+    // トゲ: 顔の面のまわりに8本、少し後ろへ傾ける
+    const up = new THREE.Vector3(0, 1, 0);
+    for (let k = 0; k < 8; k++) {
+      const a = (95 - k * 45 + (k % 2 ? 6 : -4)) * Math.PI / 180;
+      const v = new THREE.Vector3(Math.cos(a), Math.sin(a), -0.28).normalize();
+      const sp = new THREE.Mesh(GEO.spike, M.spike); sp.castShadow = true;
+      sp.quaternion.setFromUnitVectors(up, v); sp.position.copy(v.clone().multiplyScalar(RB + 0.11));
+      sp.scale.y = 1 + (k % 3 === 0 ? 0.12 : k % 3 === 1 ? -0.05 : 0.04);
+      inner.add(sp);
+    }
+    inner.rotation.x = -0.85;                                          // 顔とトゲの面をカメラへ向ける
     board.add(grp); return { grp, inner };
   });
   // カービィ(足なし、まん丸)
