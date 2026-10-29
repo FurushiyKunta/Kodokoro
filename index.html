@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ころころ">
+<title>傾きセンサーの確認</title>
+<style>
+  html,body{margin:0;height:100%;background:#fde7f0;font-family:-apple-system,"Hiragino Sans",sans-serif;color:#4a2a3a;
+    -webkit-user-select:none;user-select:none;overscroll-behavior:none;touch-action:none}
+  #wrap{display:flex;flex-direction:column;height:100%;padding:env(safe-area-inset-top) 12px env(safe-area-inset-bottom);box-sizing:border-box}
+  h1{font-size:18px;margin:10px 0 6px;text-align:center}
+  #checks{font-size:13px;line-height:1.6;background:#fff;border-radius:12px;padding:8px 12px}
+  .ok{color:#178a3e;font-weight:bold}.ng{color:#c62828;font-weight:bold}
+  #vals{font-size:13px;font-variant-numeric:tabular-nums;margin:6px 2px}
+  #stage{flex:1;position:relative;margin:6px 0;min-height:200px}
+  canvas{position:absolute;inset:0;width:100%;height:100%;border-radius:16px;background:#fff6e0;box-shadow:inset 0 0 0 4px #e8a33c}
+  .btns{display:flex;gap:8px;margin-bottom:10px}
+  button{flex:1;font-size:16px;padding:14px 8px;border:none;border-radius:12px;background:#ff6fa5;color:#fff;font-weight:bold}
+  button.sub{background:#9c7a88}
+  #msg{font-size:13px;text-align:center;min-height:1.4em}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <h1>📱 傾きセンサーの確認</h1>
+  <div id="checks"></div>
+  <div id="msg">下の「センサーを許可」を押してください</div>
+  <div id="vals">前後 β: — ／ 左右 γ: — ／ 受信: 0回</div>
+  <div id="stage"><canvas id="cv"></canvas></div>
+  <div class="btns">
+    <button id="go">センサーを許可</button>
+    <button id="zero" class="sub">今の傾きを水平にする</button>
+  </div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const inFrame = (() => { try { return window.self !== window.top; } catch { return true; } })();
+const hasOri = 'DeviceOrientationEvent' in window;
+const needPerm = hasOri && typeof DeviceOrientationEvent.requestPermission === 'function';
+function row(label, ok, note){ return `${label}: <span class="${ok?'ok':'ng'}">${ok?'OK':'NG'}</span>${note?' '+note:''}<br>`; }
+function renderChecks(perm){
+  $('checks').innerHTML =
+    row('https で開いている', window.isSecureContext, window.isSecureContext?'':'(http では iOS がセンサーを渡しません)') +
+    row('埋め込みではなく直接開いている', !inFrame, inFrame?'(枠の中ではiOSが断ります)':'') +
+    row('このブラウザにセンサー機能がある', hasOri) +
+    (perm===undefined ? '許可: まだ(ボタンを押すと聞かれます)' :
+      row('許可', perm==='granted', perm==='granted'?'':'('+perm+')'));
+}
+renderChecks();
+
+let beta=null, gamma=null, count=0, zb=0, zg=0;
+function onOri(e){
+  if (e.beta==null || e.gamma==null) return;
+  beta=e.beta; gamma=e.gamma; count++;
+  $('vals').textContent = `前後 β: ${beta.toFixed(1)}° ／ 左右 γ: ${gamma.toFixed(1)}° ／ 受信: ${count}回`;
+  if (count===1) $('msg').innerHTML = '<span class="ok">センサーの値が届いています!</span> 傾けて玉を転がしてみてください';
+}
+
+$('go').addEventListener('click', async () => {
+  try {
+    let st = 'granted';
+    if (needPerm) st = await DeviceOrientationEvent.requestPermission();
+    if (typeof DeviceMotionEvent!=='undefined' && typeof DeviceMotionEvent.requestPermission==='function') {
+      try { await DeviceMotionEvent.requestPermission(); } catch {}
+    }
+    renderChecks(st);
+    if (st==='granted') {
+      window.addEventListener('deviceorientation', onOri);
+      $('msg').textContent = '許可されました。値が届くのを待っています…';
+      setTimeout(()=>{ if(!count) $('msg').innerHTML='<span class="ng">許可は出たのに値が届きません</span>(パソコンなどセンサーのない機器かもしれません)'; }, 2500);
+    } else {
+      $('msg').innerHTML = '<span class="ng">許可されませんでした。</span> Safariを完全に閉じて開き直し、もう一度押してください';
+    }
+  } catch (err) {
+    renderChecks('エラー');
+    $('msg').innerHTML = '<span class="ng">エラー:</span> ' + err.message;
+  }
+});
+$('zero').addEventListener('click', () => { if (beta!=null){ zb=beta; zg=gamma; $('msg').textContent='今の傾きを水平にしました'; } });
+
+// 玉を転がす(手ざわりの確認用)
+const cv=$('cv'), ctx=cv.getContext('2d');
+let W=0,H=0,dpr=1, x=0,y=0,vx=0,vy=0; const R=26;
+function resize(){ dpr=window.devicePixelRatio||1; const r=cv.getBoundingClientRect(); W=r.width; H=r.height;
+  cv.width=W*dpr; cv.height=H*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); if(!x){x=W/2;y=H/2;} }
+addEventListener('resize', resize); resize();
+let last=performance.now(), spin=0;
+function loop(t){
+  const dt=Math.min(0.033,(t-last)/1000); last=t;
+  if (beta!=null){
+    const ax=Math.max(-45,Math.min(45,gamma-zg)), ay=Math.max(-45,Math.min(45,beta-zb));
+    vx += Math.sin(ax*Math.PI/180)*1800*dt; vy += Math.sin(ay*Math.PI/180)*1800*dt;
+  }
+  vx*=0.985; vy*=0.985; x+=vx*dt; y+=vy*dt;
+  if(x<R+4){x=R+4;vx*=-0.5} if(x>W-R-4){x=W-R-4;vx*=-0.5}
+  if(y<R+4){y=R+4;vy*=-0.5} if(y>H-R-4){y=H-R-4;vy*=-0.5}
+  spin += vx*dt/R;
+  ctx.clearRect(0,0,W,H);
+  ctx.save(); ctx.translate(x,y); ctx.rotate(spin);
+  ctx.fillStyle='#ff9cc2'; ctx.beginPath(); ctx.arc(0,0,R,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#ff6f9f'; ctx.beginPath(); ctx.ellipse(-12,10,6,3.5,0,0,Math.PI*2); ctx.ellipse(12,10,6,3.5,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#222'; ctx.beginPath(); ctx.ellipse(-7,-4,3.5,7,0,0,Math.PI*2); ctx.ellipse(7,-4,3.5,7,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(-7,-7,1.6,0,Math.PI*2); ctx.arc(7,-7,1.6,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
