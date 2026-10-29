@@ -586,8 +586,8 @@ const M = {
   kirby: new THREE.MeshStandardMaterial({ map: kirbyTex, roughness: 0.45 }),
   waddle: new THREE.MeshStandardMaterial({ map: waddleTex, roughness: 0.6 }),
   waddleFoot: new THREE.MeshStandardMaterial({ color: "#d9601c", roughness: 0.6 }),
-  star: new THREE.MeshPhysicalMaterial({ color: "#ffe94a", roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.12, emissive: "#ffb300", emissiveIntensity: 0.3 }),
-  goal: new THREE.MeshPhysicalMaterial({ color: "#ffd21f", roughness: 0.25, clearcoat: 1, clearcoatRoughness: 0.1, emissive: "#ffc400", emissiveIntensity: 0.55 }),
+  star: new THREE.MeshStandardMaterial({ color: "#f6f03e", roughness: 0.55, emissive: "#efe040", emissiveIntensity: 0.32 }),
+  goal: new THREE.MeshStandardMaterial({ color: "#f8f04a", roughness: 0.5, emissive: "#f2e23c", emissiveIntensity: 0.5 }),
   bumper: new THREE.MeshStandardMaterial({ color: "#ff4f8b", roughness: 0.35 }),
   bumperBase: new THREE.MeshStandardMaterial({ color: "#b5154f", roughness: 0.5 }),
   white: new THREE.MeshStandardMaterial({ color: "#ffffff", roughness: 0.4 }),
@@ -597,22 +597,56 @@ const M = {
 // 角を丸めた星
 function roundStarShape(ro, ri, k){
   const pts = [];
-  for (let i = 0; i < 10; i++) { const a = Math.PI / 2 + i * Math.PI / 5, r = i % 2 ? ri : ro; pts.push(new THREE.Vector2(Math.cos(a) * r, Math.sin(a) * r)); }
+  for (let i = 0; i < 10; i++) { const a = Math.PI / 2 + i * Math.PI / 5, r = i % 2 ? ri : ro; pts.push(new THREE.Vector2(Math.cos(a) * r, Math.sin(a) * r * 0.96)); } // 見本に合わせて少し横長
   const s = new THREE.Shape(), n = pts.length, lerp = (a, b, t) => new THREE.Vector2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
   for (let i = 0; i < n; i++) {
     const p = pts[i], prev = pts[(i + n - 1) % n], next = pts[(i + 1) % n];
-    const kk = i % 2 ? k * 0.9 : k;   // くびれ側も大きく丸める
+    const kk = i % 2 ? k * 0.62 : k;  // 先っぽはやわらかく、くびれは少しだけ丸める
     const a = lerp(p, prev, kk), b = lerp(p, next, kk);
     if (i === 0) s.moveTo(a.x, a.y); else s.lineTo(a.x, a.y);
     s.quadraticCurveTo(p.x, p.y, b.x, b.y);
   }
   s.closePath(); return s;
 }
-function starGeo(size, depth){
-  // 腕を太く短く(くびれを浅く)して、角を大きく丸めたぷっくり星
-  const g = new THREE.ExtrudeGeometry(roundStarShape(size, size * 0.62, 0.5),
-    { depth, bevelEnabled: true, bevelThickness: depth * 1.1, bevelSize: size * 0.13, bevelSegments: 5, curveSegments: 8 });
-  g.center(); return g;
+// クッションのようにふくらんだ星: 縁からの距離で厚みを決め(縁は丸く、中央は平ら)、表面をならして折れ目を消す
+function starGeo(size, thick){
+  const outline = roundStarShape(size, size * 0.56, 0.16).getSpacedPoints(200); outline.pop();
+  const n = outline.length, RINGS = 16, xy = [];
+  xy.push([0, 0]);
+  for (let j = 1; j <= RINGS; j++) { const sc = j / RINGS; for (const p of outline) xy.push([p.x * sc, p.y * sc]); }
+  // 縁(輪郭)までの距離
+  function edgeDist(x, y){
+    let best = 1e9;
+    for (let i = 0; i < n; i++) {
+      const a = outline[i], b = outline[(i + 1) % n], vx = b.x - a.x, vy = b.y - a.y;
+      const t = Math.max(0, Math.min(1, ((x - a.x) * vx + (y - a.y) * vy) / (vx * vx + vy * vy)));
+      const dx = x - a.x - vx * t, dy = y - a.y - vy * t; best = Math.min(best, dx * dx + dy * dy);
+    }
+    return Math.sqrt(best);
+  }
+  const D = size * 0.22, N = xy.length, edgeStart = 1 + (RINGS - 1) * n;
+  let h = xy.map(([x, y], i) => { if (i >= edgeStart) return 0; const u = Math.min(1, edgeDist(x, y) / D); return thick * Math.sqrt(1 - (1 - u) * (1 - u)); });
+  // 三角形(表の面)
+  const tri = [], V = (j, i) => j === 0 ? 0 : 1 + (j - 1) * n + (i % n);
+  for (let i = 0; i < n; i++) tri.push([0, V(1, i), V(1, i + 1)]);
+  for (let j = 1; j < RINGS; j++) for (let i = 0; i < n; i++) tri.push([V(j, i), V(j + 1, i), V(j + 1, i + 1)], [V(j, i), V(j + 1, i + 1), V(j, i + 1)]);
+  // 高さをならす(縁は0のまま)
+  const nb = Array.from({ length: N }, () => new Set());
+  for (const [a, b, c] of tri) { nb[a].add(b).add(c); nb[b].add(a).add(c); nb[c].add(a).add(b); }
+  for (let it = 0; it < 10; it++) {
+    const h2 = h.slice();
+    for (let i = 0; i < edgeStart; i++) { let sum = 0; for (const k of nb[i]) sum += h[k]; h2[i] = h[i] * 0.5 + 0.5 * sum / nb[i].size; }
+    h = h2;
+  }
+  // 表と裏を作る(縁の輪は共有)
+  const pos = [], back = new Array(N);
+  xy.forEach(([x, y], i) => pos.push(x, y, h[i]));
+  xy.forEach(([x, y], i) => { if (i >= edgeStart) back[i] = i; else { back[i] = pos.length / 3; pos.push(x, y, -h[i]); } });
+  const idx = [];
+  for (const [a, b, c] of tri) { idx.push(a, b, c); idx.push(back[a], back[c], back[b]); }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
+  return g;
 }
 const GEO = {
   floor: new RoundedBoxGeometry(1, 1, 1, 2, 0.06),
@@ -620,11 +654,11 @@ const GEO = {
   kirby: new THREE.SphereGeometry(1, 48, 32),
   waddle: new THREE.SphereGeometry(1, 32, 24),
   foot: new THREE.SphereGeometry(1, 16, 12),
-  star: starGeo(0.27, 0.08),
+  star: starGeo(0.27, 0.085),
   goal: starGeo(0.46, 0.13),
   bumper: new THREE.CylinderGeometry(0.34, 0.38, 0.32, 32),
   bumperBase: new THREE.CylinderGeometry(0.4, 0.42, 0.08, 32),
-  bumperStar: starGeo(0.16, 0.03),
+  bumperStar: starGeo(0.16, 0.025),
   pit: new THREE.PlaneGeometry(1, 1),
 };
 
