@@ -44,8 +44,13 @@
   .row{display:flex;gap:8px;margin-top:6px}
   .sbtn{flex:1;padding:12px;border:none;border-radius:12px;background:#e9d6df;color:#5a3346;font-weight:700;font-size:14px}
   /* プレイ */
-  #play{background:#7ac36a}
-  #cv{position:absolute;inset:0;width:100%;height:100%;display:block}
+  #play{background:#ffe3ee}
+  #cv{position:absolute;inset:0}
+  #cv canvas{display:block;width:100%;height:100%}
+  #lvl{position:absolute;right:14px;bottom:calc(16px + env(safe-area-inset-bottom));width:46px;height:46px;border-radius:50%;
+    background:#0003;border:1.5px solid #fff9;pointer-events:none;display:flex;align-items:center;justify-content:center}
+  #lvlDot{width:12px;height:12px;border-radius:50%;background:#ff8fb8;box-shadow:0 0 0 2px #fff}
+  #loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:15px;color:#9b4f72;pointer-events:none}
   #hud{position:absolute;left:0;right:0;top:0;padding:calc(6px + env(safe-area-inset-top)) 8px 6px;display:flex;align-items:center;gap:6px;
     background:linear-gradient(#0000004d,#0000);color:#fff;text-shadow:0 1px 2px #0008;pointer-events:none}
   #hud .t{font-size:13px;font-weight:700;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -85,7 +90,8 @@
 </div>
 
 <div id="play" class="screen">
-  <canvas id="cv"></canvas>
+  <div id="cv"></div>
+  <div id="lvl"><div id="lvlDot"></div></div>
   <div id="hud">
     <button class="ib" id="quitBtn" aria-label="ステージ選択へ">✕</button>
     <div class="t" id="hName"></div>
@@ -93,6 +99,7 @@
     <div class="v" id="hTime">0.0</div>
     <button class="ib" id="levelBtn" aria-label="今の傾きを水平にする">⟲</button>
   </div>
+  <div id="loading">3Dを読み込み中…</div>
   <div id="toast"></div>
   <div id="over"><div class="panel">
     <h3 id="oTitle">クリア!</h3>
@@ -311,16 +318,15 @@ document.getElementById("resetBtn").addEventListener("click", () => {
 function countStars(map){ return map.join("").split("*").length - 1; }
 
 /* ===== ゲーム本体 ===== */
-const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
-let W = 0, H = 0, DPR = 1;
-function resize(){ DPR = Math.min(3, window.devicePixelRatio || 1); W = innerWidth; H = innerHeight;
-  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR); }
+let W = 0, H = 0;
+function resize(){ W = innerWidth; H = innerHeight; if (window.R3) R3.resize(W, H); }
 addEventListener("resize", resize); resize();
 
 const R = 0.34;            // カービィの半径(マス)
 const ACC = 22;            // 傾き1(=90°)のときの加速度(マス/秒²)
 const VMAX = 9;
 let G = null;              // 現在のステージの状態
+let pendingBuild = null;   // 3D描画の読み込み前に始めたステージ
 
 function startStage(i){
   const s = STAGES[i], grid = s.map.map(r => r.split(""));
@@ -337,6 +343,7 @@ function startStage(i){
   }
   g.total = g.stars.length; g.x = g.sx; g.y = g.sy;
   G = g;
+  if (window.R3) R3.build(g); else pendingBuild = g;
   document.getElementById("hName").textContent = (i + 1) + ". " + s.name;
   document.getElementById("over").classList.remove("on");
   show("play"); resize(); level();
@@ -453,10 +460,6 @@ function drawKirby(c, x, y, rad, spin, opts){
   c.save(); c.translate(x, y);
   const sq = opts.squash || 0; c.scale(1 + sq * .15, 1 - sq * .15);
   c.rotate(spin);
-  // 足
-  c.fillStyle = "#e5245e";
-  c.beginPath(); c.ellipse(-rad * .45, rad * .78, rad * .42, rad * .26, -.3, 0, Math.PI * 2); c.fill();
-  c.beginPath(); c.ellipse(rad * .45, rad * .78, rad * .42, rad * .26, .3, 0, Math.PI * 2); c.fill();
   // 体
   const gr = c.createRadialGradient(-rad * .35, -rad * .4, rad * .1, 0, 0, rad);
   gr.addColorStop(0, "#ffd3e3"); gr.addColorStop(1, "#ff8fb8");
@@ -480,88 +483,13 @@ function drawKirby(c, x, y, rad, spin, opts){
   c.fillStyle = "#b3123f"; c.beginPath(); c.ellipse(0, rad * .2, rad * .09, rad * .07, 0, 0, Math.PI * 2); c.fill();
   c.restore();
 }
-function drawWaddle(c, x, y, rad, ph, dir){
-  c.save(); c.translate(x, y + Math.sin(ph) * rad * .06);
-  c.fillStyle = "#d9601c";
-  c.beginPath(); c.ellipse(-rad * .45, rad * .78, rad * .38, rad * .22, 0, 0, Math.PI * 2); c.fill();
-  c.beginPath(); c.ellipse(rad * .45, rad * .78, rad * .38, rad * .22, 0, 0, Math.PI * 2); c.fill();
-  c.fillStyle = "#ff9b3d"; c.beginPath(); c.arc(0, 0, rad, 0, Math.PI * 2); c.fill();
-  c.fillStyle = "#ffdcb0"; c.beginPath(); c.ellipse(dir * rad * .12, rad * .05, rad * .7, rad * .55, 0, 0, Math.PI * 2); c.fill();
-  c.fillStyle = "#2a1a10";
-  c.beginPath(); c.ellipse(dir * rad * .12 - rad * .22, -rad * .05, rad * .09, rad * .2, 0, 0, Math.PI * 2); c.fill();
-  c.beginPath(); c.ellipse(dir * rad * .12 + rad * .22, -rad * .05, rad * .09, rad * .2, 0, 0, Math.PI * 2); c.fill();
-  c.fillStyle = "#ff7a8a"; c.globalAlpha = .6;
-  c.beginPath(); c.ellipse(dir * rad * .12 - rad * .45, rad * .25, rad * .13, rad * .07, 0, 0, Math.PI * 2); c.fill();
-  c.beginPath(); c.ellipse(dir * rad * .12 + rad * .45, rad * .25, rad * .13, rad * .07, 0, 0, Math.PI * 2); c.fill();
-  c.restore();
-}
-function starPath(c, x, y, ro, ri, rot){
-  c.beginPath();
-  for (let k = 0; k < 10; k++) { const a = rot + k * Math.PI / 5 - Math.PI / 2, rr = k % 2 ? ri : ro;
-    c.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); }
-  c.closePath();
-}
 let clock = 0;
-function draw(){
-  const g = G; if (!g) return;
-  const cs = cellPx(), oy = -g.camY * cs;
-  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  ctx.fillStyle = "#4b2d58"; ctx.fillRect(0, 0, W, H);
-  const r0 = Math.max(0, Math.floor(g.camY) - 1), r1 = Math.min(g.rows - 1, Math.ceil(g.camY + viewRows()) + 1);
-  for (let r = r0; r <= r1; r++) for (let c = 0; c < g.cols; c++) {
-    const ch = g.grid[r][c], X = c * cs, Y = r * cs + oy;
-    if (ch === "#") {
-      ctx.fillStyle = "#a8683a"; ctx.fillRect(X, Y, cs + .5, cs + .5);
-      ctx.fillStyle = "#c98b52"; ctx.fillRect(X + 2, Y + 2, cs - 4, cs * .45);
-      ctx.fillStyle = "#7d4a26"; ctx.fillRect(X, Y + cs - 3, cs + .5, 3);
-    } else if (ch === "o") {
-      ctx.fillStyle = (r + c) % 2 ? "#8fd27c" : "#86ca73"; ctx.fillRect(X, Y, cs + .5, cs + .5);
-      const gr = ctx.createRadialGradient(X + cs / 2, Y + cs / 2, cs * .05, X + cs / 2, Y + cs / 2, cs * .5);
-      gr.addColorStop(0, "#000"); gr.addColorStop(.75, "#1b0f22"); gr.addColorStop(1, "#3a2240");
-      ctx.fillStyle = gr; ctx.beginPath(); ctx.ellipse(X + cs / 2, Y + cs / 2, cs * .47, cs * .47, 0, 0, Math.PI * 2); ctx.fill();
-    } else if (ch === "~") {
-      ctx.fillStyle = (r + c) % 2 ? "#bfe9ff" : "#b2e2fa"; ctx.fillRect(X, Y, cs + .5, cs + .5);
-      ctx.strokeStyle = "#ffffffaa"; ctx.lineWidth = 2; ctx.beginPath();
-      ctx.moveTo(X + cs * .2, Y + cs * .7); ctx.lineTo(X + cs * .45, Y + cs * .45); ctx.moveTo(X + cs * .55, Y + cs * .35); ctx.lineTo(X + cs * .75, Y + cs * .15); ctx.stroke();
-    } else {
-      ctx.fillStyle = (r + c) % 2 ? "#8fd27c" : "#86ca73"; ctx.fillRect(X, Y, cs + .5, cs + .5);
-    }
-  }
-  // ゴール(ワープスター)
-  const gpx = g.gx * cs, gpy = g.gy * cs + oy;
-  ctx.save(); ctx.shadowColor = "#fff36b"; ctx.shadowBlur = 18;
-  ctx.fillStyle = "#ffe13b"; starPath(ctx, gpx, gpy, cs * .46, cs * .2, clock * 1.2); ctx.fill(); ctx.restore();
-  ctx.strokeStyle = "#e0a100"; ctx.lineWidth = 2; starPath(ctx, gpx, gpy, cs * .46, cs * .2, clock * 1.2); ctx.stroke();
-  // スター
-  for (const s of g.stars) if (!s.got) {
-    const px = s.x * cs, py = s.y * cs + oy + Math.sin(clock * 3 + s.x) * cs * .04;
-    ctx.fillStyle = "#fff07a"; starPath(ctx, px, py, cs * .25, cs * .11, Math.sin(clock * 2 + s.y) * .3); ctx.fill();
-    ctx.strokeStyle = "#e8b000"; ctx.lineWidth = 1.5; ctx.stroke();
-  }
-  // バンパー
-  for (const b of g.bumpers) {
-    const px = b.x * cs, py = b.y * cs + oy, rr = cs * (.36 + b.hit * .06);
-    ctx.fillStyle = "#c2185b"; ctx.beginPath(); ctx.arc(px, py + 3, rr, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = b.hit > .1 ? "#ff8ab8" : "#ff4f8b"; ctx.beginPath(); ctx.arc(px, py, rr, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = "#fff"; starPath(ctx, px, py, rr * .5, rr * .22, 0); ctx.fill();
-  }
-  // ワドルディ
-  for (const e of g.enemies) drawWaddle(ctx, e.x * cs, e.y * cs + oy, cs * .32, e.ph, e.dir);
-  // カービィ
-  let kr = cs * R, alpha = 1;
-  if (g.state === "fall") { const k = Math.min(1, g.stateT / .6); kr *= 1 - k; }
-  if (g.inv && Math.floor(g.inv * 10) % 2) alpha = .4;
-  if (kr > 0.5) {
-    ctx.globalAlpha = alpha;
-    ctx.fillStyle = "#0003"; ctx.beginPath(); ctx.ellipse(g.x * cs + 2, g.y * cs + oy + kr * .85, kr * .8, kr * .25, 0, 0, Math.PI * 2); ctx.fill();
-    drawKirby(ctx, g.x * cs, g.y * cs + oy, kr, g.spin, { squash: g.squash, dizzy: g.state === "hit" });
-    ctx.globalAlpha = 1;
-  }
-  // 傾きの目安(右下の小さな水準器)
-  const [tx, ty] = tiltVec(), lx = W - 34, ly = H - 50;
-  ctx.fillStyle = "#0004"; ctx.beginPath(); ctx.arc(lx, ly, 22, 0, Math.PI * 2); ctx.fill();
-  ctx.strokeStyle = "#fff8"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(lx, ly, 22, 0, Math.PI * 2); ctx.stroke();
-  ctx.fillStyle = "#ff8fb8"; ctx.beginPath(); ctx.arc(lx + tx * 30, ly + ty * 30, 6, 0, Math.PI * 2); ctx.fill();
+function draw(dt){
+  const [tx, ty] = tiltVec();
+  const dot = document.getElementById("lvlDot");
+  dot.style.transform = `translate(${tx * 30}px, ${ty * 30}px)`;
+  if (window.R3) R3.render(G, dt, tx, ty);
+  else if (clock > 10) document.getElementById("loading").textContent = "3Dの読み込みに失敗しました。電波のよい所で開き直してください。";
 }
 
 /* タイトルのカービィ */
@@ -572,12 +500,276 @@ function drawTitle(){ tk.clearRect(0, 0, 300, 300); drawKirby(tk, 150, 140 + Mat
 let lastT = performance.now();
 function loop(t){
   const dt = Math.min(0.033, (t - lastT) / 1000); lastT = t; clock += dt;
-  if (G && document.getElementById("play").classList.contains("on")) { step(dt); draw(); }
+  if (G && document.getElementById("play").classList.contains("on")) { step(dt); draw(dt); }
   else if (document.getElementById("title").classList.contains("on")) drawTitle();
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
 document.addEventListener("visibilitychange", () => { lastT = performance.now(); });
+</script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }
+</script>
+<script type="module">
+import * as THREE from "three";
+import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
+
+const host = document.getElementById("cv");
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+host.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color("#ffd9e8");
+scene.fog = new THREE.Fog("#ffd9e8", 40, 90);
+const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 200);
+
+scene.add(new THREE.HemisphereLight("#fff6fb", "#7a5a6a", 1.1));
+const sun = new THREE.DirectionalLight("#fff3e0", 2.2);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024);
+sun.shadow.bias = -0.0008;
+sun.shadow.normalBias = 0.02;
+scene.add(sun, sun.target);
+
+// 盤面(傾けると少し傾いて見える)
+const pivot = new THREE.Group(); scene.add(pivot);
+let board = new THREE.Group(); pivot.add(board);
+
+/* ---------- 材料 ---------- */
+function canvasTex(w, h, paint){
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  paint(c.getContext("2d"), w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t;
+}
+// 球の顔(正距円筒図法。u=0.25 が +z 向き)
+function faceTex(base, paintFace){
+  return canvasTex(1024, 512, (c, w, h) => { c.fillStyle = base; c.fillRect(0, 0, w, h); paintFace(c, w, h); });
+}
+const kirbyTex = faceTex("#ff9cc3", (c, w, h) => {
+  const cx = w * 0.25, ey = h * 0.40;
+  c.fillStyle = "#ff6f9f"; c.globalAlpha = 0.75;
+  for (const s of [-1, 1]) { c.beginPath(); c.ellipse(cx + s * w * 0.085, h * 0.53, w * 0.03, h * 0.022, 0, 0, Math.PI * 2); c.fill(); }
+  c.globalAlpha = 1;
+  for (const s of [-1, 1]) {
+    const x = cx + s * w * 0.034;
+    const gr = c.createLinearGradient(0, ey - h * 0.08, 0, ey + h * 0.08);
+    gr.addColorStop(0, "#0b0a2a"); gr.addColorStop(0.65, "#1d1a5a"); gr.addColorStop(1, "#3b5bdb");
+    c.fillStyle = gr; c.beginPath(); c.ellipse(x, ey, w * 0.0125, h * 0.08, 0, 0, Math.PI * 2); c.fill();
+    c.fillStyle = "#fff"; c.beginPath(); c.ellipse(x, ey - h * 0.042, w * 0.0065, h * 0.026, 0, 0, Math.PI * 2); c.fill();
+  }
+  c.fillStyle = "#b3123f"; c.beginPath(); c.ellipse(cx, h * 0.555, w * 0.011, h * 0.016, 0, 0, Math.PI * 2); c.fill();
+});
+const waddleTex = faceTex("#ff9b3d", (c, w, h) => {
+  const cx = w * 0.25;
+  c.fillStyle = "#ffdcb0"; c.beginPath(); c.ellipse(cx, h * 0.5, w * 0.115, h * 0.2, 0, 0, Math.PI * 2); c.fill();
+  c.fillStyle = "#2a1a10";
+  for (const s of [-1, 1]) { c.beginPath(); c.ellipse(cx + s * w * 0.04, h * 0.45, w * 0.011, h * 0.06, 0, 0, Math.PI * 2); c.fill(); }
+  c.fillStyle = "#ff7a8a"; c.globalAlpha = 0.6;
+  for (const s of [-1, 1]) { c.beginPath(); c.ellipse(cx + s * w * 0.08, h * 0.56, w * 0.02, h * 0.018, 0, 0, Math.PI * 2); c.fill(); }
+  c.globalAlpha = 1;
+});
+const M = {
+  grassA: new THREE.MeshStandardMaterial({ color: "#8fd67a", roughness: 0.9 }),
+  grassB: new THREE.MeshStandardMaterial({ color: "#7fcb6b", roughness: 0.9 }),
+  ice: new THREE.MeshStandardMaterial({ color: "#c8eeff", roughness: 0.15, metalness: 0.1 }),
+  dirt: new THREE.MeshStandardMaterial({ color: "#6b4a3a", roughness: 1 }),
+  wall: new THREE.MeshStandardMaterial({ color: "#c98b52", roughness: 0.7 }),
+  pit: new THREE.MeshBasicMaterial({ color: "#1a0f1f" }),
+  kirby: new THREE.MeshStandardMaterial({ map: kirbyTex, roughness: 0.45 }),
+  waddle: new THREE.MeshStandardMaterial({ map: waddleTex, roughness: 0.6 }),
+  waddleFoot: new THREE.MeshStandardMaterial({ color: "#d9601c", roughness: 0.6 }),
+  star: new THREE.MeshPhysicalMaterial({ color: "#ffe94a", roughness: 0.28, clearcoat: 1, clearcoatRoughness: 0.12, emissive: "#ffb300", emissiveIntensity: 0.3 }),
+  goal: new THREE.MeshPhysicalMaterial({ color: "#ffd21f", roughness: 0.25, clearcoat: 1, clearcoatRoughness: 0.1, emissive: "#ffc400", emissiveIntensity: 0.55 }),
+  bumper: new THREE.MeshStandardMaterial({ color: "#ff4f8b", roughness: 0.35 }),
+  bumperBase: new THREE.MeshStandardMaterial({ color: "#b5154f", roughness: 0.5 }),
+  white: new THREE.MeshStandardMaterial({ color: "#ffffff", roughness: 0.4 }),
+};
+
+/* ---------- 形 ---------- */
+// 角を丸めた星
+function roundStarShape(ro, ri, k){
+  const pts = [];
+  for (let i = 0; i < 10; i++) { const a = Math.PI / 2 + i * Math.PI / 5, r = i % 2 ? ri : ro; pts.push(new THREE.Vector2(Math.cos(a) * r, Math.sin(a) * r)); }
+  const s = new THREE.Shape(), n = pts.length, lerp = (a, b, t) => new THREE.Vector2(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+  for (let i = 0; i < n; i++) {
+    const p = pts[i], prev = pts[(i + n - 1) % n], next = pts[(i + 1) % n];
+    const kk = i % 2 ? k * 0.9 : k;   // くびれ側も大きく丸める
+    const a = lerp(p, prev, kk), b = lerp(p, next, kk);
+    if (i === 0) s.moveTo(a.x, a.y); else s.lineTo(a.x, a.y);
+    s.quadraticCurveTo(p.x, p.y, b.x, b.y);
+  }
+  s.closePath(); return s;
+}
+function starGeo(size, depth){
+  // 腕を太く短く(くびれを浅く)して、角を大きく丸めたぷっくり星
+  const g = new THREE.ExtrudeGeometry(roundStarShape(size, size * 0.62, 0.5),
+    { depth, bevelEnabled: true, bevelThickness: depth * 1.1, bevelSize: size * 0.13, bevelSegments: 5, curveSegments: 8 });
+  g.center(); return g;
+}
+const GEO = {
+  floor: new RoundedBoxGeometry(1, 1, 1, 2, 0.06),
+  wall: new RoundedBoxGeometry(0.96, 0.8, 0.96, 3, 0.14),
+  kirby: new THREE.SphereGeometry(1, 48, 32),
+  waddle: new THREE.SphereGeometry(1, 32, 24),
+  foot: new THREE.SphereGeometry(1, 16, 12),
+  star: starGeo(0.27, 0.08),
+  goal: starGeo(0.46, 0.13),
+  bumper: new THREE.CylinderGeometry(0.34, 0.38, 0.32, 32),
+  bumperBase: new THREE.CylinderGeometry(0.4, 0.42, 0.08, 32),
+  bumperStar: starGeo(0.16, 0.03),
+  pit: new THREE.PlaneGeometry(1, 1),
+};
+
+/* ---------- ステージを組み立てる ---------- */
+let objs = null;
+function build(g){
+  pivot.remove(board);
+  board.traverse(o => { if (o.isInstancedMesh) o.dispose(); });
+  board = new THREE.Group(); pivot.add(board);
+  const cx = g.cols / 2, cz = g.rows / 2;
+  board.position.set(-cx, 0, -cz); pivot.position.set(cx, 0, cz);
+
+  // 床(草・氷)と壁はインスタンスでまとめて描く
+  const cellsA = [], cellsB = [], ice = [], walls = [], pits = [];
+  for (let r = 0; r < g.rows; r++) for (let c = 0; c < g.cols; c++) {
+    const ch = g.grid[r][c];
+    if (ch === "o") pits.push([c, r]);
+    else if (ch === "~") ice.push([c, r]);
+    else { ((r + c) % 2 ? cellsA : cellsB).push([c, r]); if (ch === "#") walls.push([c, r]); }
+  }
+  const m4 = new THREE.Matrix4();
+  function inst(geo, mat, list, y, sy){
+    if (!list.length) return;
+    const im = new THREE.InstancedMesh(geo, mat, list.length);
+    list.forEach(([c, r], i) => { m4.makeScale(1, sy || 1, 1); m4.setPosition(c + .5, y, r + .5); im.setMatrixAt(i, m4); });
+    im.receiveShadow = true; im.castShadow = true; board.add(im);
+  }
+  inst(GEO.floor, M.grassA, cellsA, -0.5);
+  inst(GEO.floor, M.grassB, cellsB, -0.5);
+  inst(GEO.floor, M.ice, ice, -0.5);
+  inst(GEO.wall, M.wall, walls, 0.4);
+  // 穴の底
+  for (const [c, r] of pits) { const p = new THREE.Mesh(GEO.pit, M.pit); p.rotation.x = -Math.PI / 2; p.position.set(c + .5, -2.2, r + .5); board.add(p); }
+  // 盤の下の土台(穴の奥が抜けて見えないように)
+  const base = new THREE.Mesh(new THREE.BoxGeometry(g.cols + 0.4, 1.4, g.rows + 0.4), M.dirt);
+  base.position.set(cx, -2.95, cz); board.add(base);
+
+  // ゴール
+  const goal = new THREE.Mesh(GEO.goal, M.goal); goal.castShadow = true;
+  goal.position.set(g.gx, 0.45, g.gy); goal.rotation.x = -0.35; board.add(goal);
+  const glow = new THREE.PointLight("#ffe066", 3, 3.5, 1.5); glow.position.set(g.gx, 0.8, g.gy); board.add(glow);
+  // スター
+  const stars = g.stars.map(s => { const m = new THREE.Mesh(GEO.star, M.star); m.castShadow = true; m.position.set(s.x, 0.32, s.y); board.add(m); return m; });
+  // バンパー
+  const bumpers = g.bumpers.map(b => {
+    const grp = new THREE.Group(); grp.position.set(b.x, 0, b.y);
+    const base = new THREE.Mesh(GEO.bumperBase, M.bumperBase); base.position.y = 0.04; base.receiveShadow = true;
+    const top = new THREE.Mesh(GEO.bumper, M.bumper); top.position.y = 0.22; top.castShadow = true;
+    const st = new THREE.Mesh(GEO.bumperStar, M.white); st.rotation.x = -Math.PI / 2; st.position.y = 0.4;
+    grp.add(base, top, st); board.add(grp); return { grp, top };
+  });
+  // ワドルディ
+  const enemies = g.enemies.map(() => {
+    const grp = new THREE.Group();
+    const body = new THREE.Mesh(GEO.waddle, M.waddle); body.scale.setScalar(0.32); body.position.y = 0.36; body.castShadow = true;
+    const fl = new THREE.Mesh(GEO.foot, M.waddleFoot), fr = fl.clone();
+    fl.scale.set(0.13, 0.07, 0.17); fr.scale.copy(fl.scale); fl.position.set(-0.14, 0.07, 0.04); fr.position.set(0.14, 0.07, 0.04);
+    fl.castShadow = fr.castShadow = true;
+    grp.add(body, fl, fr); board.add(grp); return { grp, body };
+  });
+  // カービィ(足なし、まん丸)
+  const R = 0.34;
+  const kirby = new THREE.Mesh(GEO.kirby, M.kirby); kirby.scale.setScalar(R); kirby.castShadow = true;
+  const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.6); // 顔を少しカメラ側へ
+  kirby.quaternion.copy(q); board.add(kirby);
+
+  // 影を落とす範囲
+  const span = Math.max(g.cols, g.rows) / 2 + 2;
+  Object.assign(sun.shadow.camera, { left: -span, right: span, top: span, bottom: -span, near: 1, far: 60 });
+  sun.shadow.camera.updateProjectionMatrix();
+  sun.position.set(cx - 6, 18, cz - 4); sun.target.position.set(cx, 0, cz);
+
+  objs = { g, R, goal, glow, stars, bumpers, enemies, kirby, lastX: g.x, lastY: g.y, faceQ: q.clone() };
+  fitCamera();
+  document.getElementById("loading").style.display = "none";
+}
+
+/* ---------- カメラ ---------- */
+let W = innerWidth, H = innerHeight;
+function fitCamera(){
+  if (!objs) return;
+  const g = objs.g, aspect = W / H, vf = camera.fov * Math.PI / 180;
+  camera.aspect = aspect; camera.updateProjectionMatrix();
+  const pitch = 58 * Math.PI / 180;                        // 見下ろす角度
+  const hf = 2 * Math.atan(Math.tan(vf / 2) * aspect);
+  const dW = (g.cols + 1.2) / 2 / Math.tan(hf / 2);
+  const dH = (g.rows * Math.sin(pitch) + 1.5) / (2 * Math.tan(vf / 2) * 0.86);
+  const d = Math.max(dW, dH) * 1.02;
+  const tx = g.cols / 2, tz = g.rows / 2 + 0.35;
+  camera.position.set(tx, Math.sin(pitch) * d, tz + Math.cos(pitch) * d);
+  camera.lookAt(tx, 0, tz);
+}
+function resize(w, h){ W = w; H = h; renderer.setSize(w, h, false); fitCamera(); }
+
+/* ---------- 毎フレーム ---------- */
+const axis = new THREE.Vector3(), dq = new THREE.Quaternion();
+let t = 0;
+function render(g, dt, tx, ty){
+  if (!g) return;
+  if (!objs || objs.g !== g) build(g);
+  t += dt;
+  const o = objs, k = o.kirby;
+  // 盤面を少し傾けて見せる
+  pivot.rotation.x += ((ty || 0) * 0.07 - pivot.rotation.x) * Math.min(1, dt * 8);
+  pivot.rotation.z += (-(tx || 0) * 0.07 - pivot.rotation.z) * Math.min(1, dt * 8);
+
+  // カービィ: 進んだぶんだけ転がす
+  const dx = g.x - o.lastX, dz = g.y - o.lastY, dist = Math.hypot(dx, dz);
+  if (dist > 1e-5 && dist < 1.5 && g.state === "play") {
+    axis.set(dz, 0, -dx).normalize(); dq.setFromAxisAngle(axis, dist / o.R);
+    k.quaternion.premultiply(dq);
+  }
+  o.lastX = g.x; o.lastY = g.y;
+  let y = o.R, s = o.R, sq = g.squash || 0;
+  if (g.state === "fall") { const p = Math.min(1, g.stateT / 0.6); y = o.R - p * 2.2; s = o.R * (1 - p * 0.5); }
+  else if (g.state === "ready") { k.quaternion.slerp(o.faceQ, Math.min(1, dt * 10)); }
+  if (g.state === "clear") { const p = Math.min(1, g.stateT / 1.2); y = o.R + 0.25 + p * 1.6; k.quaternion.slerp(o.faceQ, Math.min(1, dt * 6)); }
+  if (g.state === "hit") { k.position.x = g.x + Math.sin(g.stateT * 60) * 0.04; } else k.position.x = g.x;
+  k.position.z = g.y; k.position.y = y - sq * 0.05;
+  k.scale.set(s * (1 + sq * 0.12), s * (1 - sq * 0.15), s * (1 + sq * 0.12));
+  k.visible = !(g.inv && Math.floor(g.inv * 10) % 2);
+  if (g.state === "play" && (o.prevState === "fall" || o.prevState === "hit")) k.quaternion.copy(o.faceQ); // やり直しで顔を正面に
+  o.prevState = g.state;
+
+  // ゴールとスター
+  o.goal.rotation.y = t * 1.3;
+  o.goal.position.y = 0.45 + Math.sin(t * 2.5) * 0.06 + (g.state === "clear" ? Math.min(1, g.stateT / 1.2) * 1.6 : 0);
+  o.glow.intensity = 2.5 + Math.sin(t * 4) * 0.8;
+  g.stars.forEach((st, i) => {
+    const m = o.stars[i];
+    if (st.got) { if (m.visible) { m.userData.p = (m.userData.p || 0) + dt * 3; m.position.y = 0.32 + m.userData.p; m.scale.setScalar(Math.max(0, 1 - m.userData.p)); if (m.userData.p >= 1) m.visible = false; } }
+    else { m.visible = true; m.userData.p = 0; const b = Math.abs(Math.sin(t * 3.2 + i * 1.3)); m.scale.set(1 + (1 - b) * 0.08, 1 - (1 - b) * 0.1, 1); m.rotation.y = Math.sin(t * 1.6 + i) * 0.7; m.position.y = 0.36 + b * 0.12; } // ぽよんと弾む
+  });
+  g.bumpers.forEach((b, i) => { const s2 = 1 + b.hit * 0.18; o.bumpers[i].top.scale.set(s2, 1 - b.hit * 0.25, s2); });
+  g.enemies.forEach((e, i) => {
+    const en = o.enemies[i]; en.grp.position.set(e.x, Math.abs(Math.sin(e.ph)) * 0.04, e.y);
+    en.grp.rotation.y += (e.dir * 1.0 - en.grp.rotation.y) * Math.min(1, dt * 10);
+    en.body.rotation.z = Math.sin(e.ph) * 0.08;
+  });
+  renderer.render(scene, camera);
+}
+
+window.R3 = { build, render, resize };
+resize(innerWidth, innerHeight);
+if (typeof pendingBuild !== "undefined" && pendingBuild) build(pendingBuild);
 </script>
 </body>
 </html>
