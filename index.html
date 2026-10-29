@@ -84,7 +84,7 @@
   <p class="lead">ステージを始めたときの持ち方が「水平」になります。楽な角度で持ってから選んでね。</p>
   <div id="stageList"></div>
   <div class="row">
-    <button class="sbtn" id="sndBtn2">🔊 音あり</button>
+    <button class="sbtn" id="sndBtn2">🔊 音楽+効果音</button>
     <button class="sbtn" id="resetBtn">記録を消す</button>
   </div>
 </div>
@@ -260,26 +260,179 @@ try { save = JSON.parse(localStorage.getItem(SAVE_KEY) || "{}") || {}; } catch (
 function persist(){ try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) {} }
 function rec(i){ return save["s"+i] || null; }
 
-/* ===== 音 ===== */
-let actx = null, soundOn = save.sound !== false;
-function initAudio(){ if (!actx) { try { actx = new (window.AudioContext||window.webkitAudioContext)(); } catch(e){} } if (actx && actx.state==="suspended") actx.resume(); }
-function tone(f, d, type, vol, slide){
-  if (!soundOn || !actx) return;
-  const t = actx.currentTime, o = actx.createOscillator(), g = actx.createGain();
-  o.type = type || "square"; o.frequency.setValueAtTime(f, t);
-  if (slide) o.frequency.exponentialRampToValueAtTime(slide, t + d);
-  g.gain.setValueAtTime(vol || 0.08, t); g.gain.exponentialRampToValueAtTime(0.0001, t + d);
-  o.connect(g); g.connect(actx.destination); o.start(t); o.stop(t + d + 0.02);
+/* ===== 音(すべてその場で合成。曲はカービィ風のオリジナル) ===== */
+// soundMode: 2 = 音楽+効果音、1 = 効果音だけ、0 = 音なし
+let soundMode = typeof save.soundMode === "number" ? save.soundMode : (save.sound === false ? 0 : 2);
+let actx = null, master = null, musicBus = null, sfxBus = null, noiseBuf = null, waves = {};
+function initAudio(){
+  if (!actx) {
+    try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; }
+    const comp = actx.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 4; comp.connect(actx.destination);
+    master = actx.createGain(); master.gain.value = 0.9; master.connect(comp);
+    musicBus = actx.createGain(); musicBus.gain.value = 0.2; musicBus.connect(master);
+    sfxBus = actx.createGain(); sfxBus.gain.value = 0.5; sfxBus.connect(master);
+    noiseBuf = actx.createBuffer(1, actx.sampleRate, actx.sampleRate);
+    const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    for (const duty of [0.125, 0.25, 0.5]) {                 // ファミコン風のパルス波
+      const n = 40, re = new Float32Array(n), im = new Float32Array(n);
+      for (let k = 1; k < n; k++) re[k] = 2 / (k * Math.PI) * Math.sin(k * Math.PI * duty);
+      waves[duty] = actx.createPeriodicWave(re, im);
+    }
+    const b = actx.createBuffer(1, 1, 22050), s = actx.createBufferSource(); s.buffer = b; s.connect(actx.destination); s.start(0); // iOSの音の解錠
+  }
+  if (actx.state === "suspended") actx.resume();
+}
+const NOTE = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+function hz(name){ const m = /^([A-G])([#b]?)(-?\d)$/.exec(name); let n = NOTE[m[1]] + (m[2] === "#" ? 1 : m[2] === "b" ? -1 : 0);
+  return 440 * Math.pow(2, (n + (+m[3] + 1) * 12 - 69) / 12); }
+// 1音を鳴らす
+function voice(bus, kind, f, t, dur, vol){
+  const g = actx.createGain(); g.connect(bus);
+  if (kind === "bell") {                                     // 鈴のような音
+    for (const [mul, v] of [[1, 1], [2, 0.35], [3.01, 0.12]]) {
+      const o = actx.createOscillator(), og = actx.createGain(); o.type = "sine"; o.frequency.value = f * mul;
+      og.gain.value = v; o.connect(og); og.connect(g); o.start(t); o.stop(t + 1.6);
+    }
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t + 1.5);
+    return;
+  }
+  const o = actx.createOscillator();
+  if (kind === "tri") o.type = "triangle"; else o.setPeriodicWave(waves[kind === "pulse12" ? 0.125 : kind === "pulse50" ? 0.5 : 0.25]);
+  o.frequency.setValueAtTime(f, t);
+  if (kind === "pulse" && dur > 0.28) {                       // 長い音にはビブラート
+    const l = actx.createOscillator(), lg = actx.createGain(); l.frequency.value = 5.5; lg.gain.setValueAtTime(0, t);
+    lg.gain.linearRampToValueAtTime(f * 0.012, t + 0.25); l.connect(lg); lg.connect(o.frequency); l.start(t); l.stop(t + dur + 0.1);
+  }
+  const rel = kind === "tri" ? 0.03 : 0.05;
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.006);
+  g.gain.exponentialRampToValueAtTime(vol * (kind === "tri" ? 0.85 : 0.6), t + Math.min(dur, 0.09));
+  g.gain.setValueAtTime(vol * (kind === "tri" ? 0.85 : 0.6), t + dur); g.gain.exponentialRampToValueAtTime(0.0001, t + dur + rel);
+  o.connect(g); o.start(t); o.stop(t + dur + rel + 0.02);
+}
+function drum(bus, kind, t, vol){
+  if (kind === "kick") {
+    const o = actx.createOscillator(), g = actx.createGain(); o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(42, t + 0.12);
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16); o.connect(g); g.connect(bus); o.start(t); o.stop(t + 0.18); return;
+  }
+  const s = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain(); s.buffer = noiseBuf;
+  if (kind === "snare") { f.type = "bandpass"; f.frequency.value = 1900; f.Q.value = 0.7; } else { f.type = "highpass"; f.frequency.value = 7500; }
+  const len = kind === "snare" ? 0.13 : 0.035;
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+  s.connect(f); f.connect(g); g.connect(bus); s.start(t, Math.random() * 0.5); s.stop(t + len + 0.01);
+}
+
+/* --- 曲(1小節 = 8分音符8つ。"." はのばす、"-" は休み) --- */
+const SONGS = {
+  menu: { bpm: 118, swing: 0.16, lead: "pulse", drums: "soft",
+    chords: ["C", "G", "Am", "F", "C", "G", "F G", "C"],
+    mel: ["G5 . E5 . C5 . E5 .", "D5 . . G5 B5 . D6 .", "C6 . B5 . A5 . E5 .", "F5 . A5 . C6 . A5 .",
+          "G5 . E5 . G5 . C6 .", "B5 . D6 . G5 . B5 .", "A5 . F5 . B5 . D6 .", "C6 . . . - . - ."] },
+  field: { bpm: 152, swing: 0.18, lead: "pulse", drums: "pop",
+    chords: ["C", "Am", "F", "G", "C", "Am", "Dm G", "C", "F", "G", "Em", "Am", "F", "G", "C A7", "Dm G"],
+    mel: ["E5 . G5 . C6 . G5 .", "A5 . G5 E5 C5 . E5 .", "F5 . A5 . C6 . A5 G5", "G5 . . . D5 . G5 .",
+          "E5 . G5 . C6 . D6 .", "E6 . D6 C6 A5 . C6 .", "D6 . C6 A5 G5 . F5 E5", "C5 . . . - . G4 .",
+          "A5 . . F5 C6 . A5 .", "B5 . . G5 D6 . B5 .", "G5 . E5 . B5 . G5 .", "C6 . . . A5 . . .",
+          "A5 . C6 . F6 . E6 D6", "D6 . B5 . G5 . A5 B5", "C6 . G5 . A5 . C#6 .", "D6 . C6 . B5 . G5 ."] },
+  ice: { bpm: 112, swing: 0, lead: "bell", drums: "none",
+    chords: ["Am", "F", "C", "G", "Am", "F", "Dm", "E"],
+    mel: ["A5 . C6 . E6 . . .", "F6 . E6 . C6 . . .", "G5 . C6 . E6 . D6 .", "D6 . . . B5 . . .",
+          "A5 . C6 . E6 . A6 .", "G6 . F6 . E6 . C6 .", "D6 . F6 . A5 . D6 .", "E6 . . . G#5 . B5 ."] },
+  castle: { bpm: 160, swing: 0, lead: "pulse", drums: "march",
+    chords: ["Dm", "Bb", "C", "A", "Dm", "Bb", "Gm A", "Dm"],
+    mel: ["D5 . F5 . A5 . D6 .", "D6 . C6 . Bb5 . F5 .", "G5 . E5 . C6 . G5 .", "A5 . . . C#6 . E6 .",
+          "D6 . A5 . F5 . D5 .", "F5 . G5 . Bb5 . D6 .", "C6 . Bb5 . A5 . G5 .", "A5 . . . - . A4 ."] },
+};
+function chordNotes(name){
+  const m = /^([A-G][#b]?)(m|7|dim)?$/.exec(name), root = m[1], q = m[2] || "";
+  const iv = q === "m" ? [0, 3, 7] : q === "7" ? [0, 4, 7, 10] : q === "dim" ? [0, 3, 6] : [0, 4, 7];
+  const base = hz(root + "3"); return iv.map(s => base * Math.pow(2, s / 12));
+}
+// 曲を「何ステップ目に何を鳴らすか」の表にする
+function compile(song){
+  const ev = [], bars = song.mel.length;
+  song.mel.forEach((bar, b) => {
+    const tk = bar.trim().split(/\s+/);
+    tk.forEach((x, k) => {
+      if (x === "." || x === "-") return;
+      let len = 1; while (k + len < tk.length && tk[k + len] === ".") len++;
+      ev.push({ s: b * 8 + k, len, f: hz(x), kind: song.lead === "bell" ? "bell" : "pulse", vol: song.lead === "bell" ? 0.5 : 0.32 });
+    });
+    const ch = song.chords[b].split(" ");
+    for (let k = 0; k < 8; k++) {
+      const c = chordNotes(ch[ch.length === 2 && k >= 4 ? 1 : 0]), s = b * 8 + k;
+      if (k % 2 === 0) { const f = (k % 4 === 0 ? c[0] : c[2] / 2) / 2; ev.push({ s, len: song.drums === "none" ? 2 : 1.6, f, kind: "tri", vol: 0.55 }); }
+      ev.push({ s, len: 0.5, f: c[[0, 1, 2, 1][k % 4]] * 2, kind: "pulse12", vol: song.lead === "bell" ? 0.05 : 0.09 });
+      if (song.drums === "pop") { if (k % 4 === 0) ev.push({ s, drum: "kick", vol: 0.7 }); if (k % 4 === 2) ev.push({ s, drum: "snare", vol: 0.35 }); ev.push({ s, drum: "hat", vol: 0.12 }); }
+      if (song.drums === "soft") { if (k === 0 || k === 4) ev.push({ s, drum: "kick", vol: 0.45 }); if (k % 2) ev.push({ s, drum: "hat", vol: 0.08 }); }
+      if (song.drums === "march") { if (k % 2 === 0) ev.push({ s, drum: "kick", vol: 0.6 }); if (k === 2 || k === 6 || k === 7) ev.push({ s, drum: "snare", vol: 0.4 }); ev.push({ s, drum: "hat", vol: 0.1 }); }
+    }
+  });
+  const bySt = Array.from({ length: bars * 8 }, () => []); for (const e of ev) bySt[e.s].push(e);
+  return { bySt, steps: bars * 8 };
+}
+const COMPILED = {};
+let curSong = null, wantSong = null, songStep = 0, songT = 0, songTimer = 0;
+function playSong(name){
+  wantSong = name;
+  if (soundMode < 2 || !actx) { stopSongNow(); return; }
+  if (curSong === name) return;
+  stopSongNow(); curSong = name;
+  const song = SONGS[name], c = COMPILED[name] || (COMPILED[name] = compile(song)), st = 60 / song.bpm / 2;
+  songStep = 0; songT = actx.currentTime + 0.08;
+  songTimer = setInterval(() => {
+    if (!actx || curSong !== name) return;
+    while (songT < actx.currentTime + 0.2) {
+      const i = songStep % c.steps, t = songT + (i % 2 ? song.swing * st : 0);
+      for (const e of c.bySt[i]) { if (e.drum) drum(musicBus, e.drum, t, e.vol); else voice(musicBus, e.kind, e.f, t, e.len * st * 0.92, e.vol); }
+      songStep++; songT += st;
+    }
+  }, 25);
+}
+function stopSongNow(){
+  clearInterval(songTimer); songTimer = 0; curSong = null;
+  if (musicBus && actx) {                                   // 鳴っている音を素早く消す
+    const old = musicBus; old.gain.setTargetAtTime(0, actx.currentTime, 0.03); setTimeout(() => old.disconnect(), 400);
+    musicBus = actx.createGain(); musicBus.gain.value = 0.2; musicBus.connect(master);
+  }
+}
+function stageSong(i){ return i === 4 ? "ice" : (i === 6 || i === 7 || i === 9) ? "castle" : "field"; }
+
+/* --- 効果音 --- */
+function sweep(type, f0, f1, d, vol, t0){
+  if (soundMode < 1 || !actx) return;
+  const t = actx.currentTime + (t0 || 0), o = actx.createOscillator(), g = actx.createGain();
+  if (waves[type]) o.setPeriodicWave(waves[type]); else o.type = type;
+  o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + d);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + d + 0.02);
+  o.connect(g); g.connect(sfxBus); o.start(t); o.stop(t + d + 0.05); return o;
+}
+function notes(list, step, kind, vol){                         // 短いフレーズ
+  if (soundMode < 1 || !actx) return;
+  let t = actx.currentTime + 0.01;
+  for (const [n, len] of list) { if (n !== "-") voice(sfxBus, kind || "pulse", hz(n), t, len * step * 0.9, vol || 0.3); t += len * step; }
 }
 const sfx = {
-  star(){ tone(988,.08,"square",.07); setTimeout(()=>tone(1319,.14,"square",.07),70); },
-  fall(){ tone(600,.5,"triangle",.12,90); },
-  hit(){ tone(180,.25,"sawtooth",.1,60); },
-  bump(){ tone(420,.07,"square",.06,700); },
-  wall(v){ tone(140,.05,"triangle",Math.min(.1,.02+v*.008)); },
-  clear(){ [523,659,784,1047].forEach((f,i)=>setTimeout(()=>tone(f,.18,"square",.08),i*110)); },
+  star(){ notes([["E6", 1], ["G6", 1], ["C7", 1], ["E7", 3]], 0.045, "pulse", 0.22); },           // キラリン
+  wall(v){ if (soundMode < 1 || !actx) return; const o = sweep("sine", 240, 300, 0.12, Math.min(0.35, 0.08 + v * 0.03)); // ぽよん
+    if (o) { const t = actx.currentTime; o.frequency.setValueAtTime(240, t); o.frequency.exponentialRampToValueAtTime(420, t + 0.04); o.frequency.exponentialRampToValueAtTime(260, t + 0.12); } },
+  bump(){ if (soundMode < 1 || !actx) return; const o = sweep("sine", 180, 460, 0.32, 0.4);           // ボヨーン
+    if (o) { const t = actx.currentTime; o.frequency.setValueAtTime(180, t); o.frequency.exponentialRampToValueAtTime(720, t + 0.06); o.frequency.exponentialRampToValueAtTime(420, t + 0.32);
+      const l = actx.createOscillator(), lg = actx.createGain(); l.frequency.value = 22; lg.gain.value = 45; l.connect(lg); lg.connect(o.frequency); l.start(t); l.stop(t + 0.36); } },
+  fall(){ sweep("sine", 1300, 140, 0.85, 0.3); sweep("pulse12", 1300, 140, 0.85, 0.06); },          // ヒュ〜ン
+  hit(){ sweep("pulse50", 620, 180, 0.28, 0.22); sweep("pulse25", 590, 170, 0.28, 0.12);           // ダメージ
+    if (soundMode >= 1 && actx) drum(sfxBus, "snare", actx.currentTime, 0.5); },
+  start(){ notes([["C6", 1], ["E6", 1], ["G6", 1], ["C7", 4]], 0.06, "pulse", 0.25); },          // スタート
+  clear(){                                                                                            // クリアのファンファーレ
+    if (soundMode < 1 || !actx) return;
+    notes([["G5", 1], ["C6", 1], ["E6", 1], ["G6", 1], ["E6", 2], ["G6", 2], ["C7", 8]], 0.1, "pulse", 0.3);
+    let t = actx.currentTime + 0.01;
+    for (const [n, len] of [["C3", 4], ["G3", 4], ["C4", 8]]) { voice(sfxBus, "tri", hz(n), t, len * 0.1 * 0.9, 0.5); t += len * 0.1; }
+    [0, 0.4, 0.8].forEach(d => drum(sfxBus, "kick", actx.currentTime + d, 0.6));
+  },
+  click(){ sweep("pulse25", 1200, 1500, 0.04, 0.12); },
 };
-function updSnd(){ document.getElementById("sndBtn2").textContent = soundOn ? "🔊 音あり" : "🔇 音なし"; }
+function updSnd(){ document.getElementById("sndBtn2").textContent = ["🔇 音なし", "🔉 効果音だけ", "🔊 音楽+効果音"][soundMode]; }
+document.addEventListener("visibilitychange", () => { if (!actx) return; if (document.hidden) actx.suspend(); else actx.resume(); });
 
 /* ===== 傾きセンサー ===== */
 let tiltB = null, tiltG = null, zb = 0, zg = 0, sensorOk = false;
@@ -323,7 +476,7 @@ document.getElementById("startBtn").addEventListener("click", async () => {
       if (st !== "granted") { msg.textContent = "傾きセンサーが許可されませんでした。Safariを閉じて開き直し、もう一度押してください。"; return; }
     }
   } catch (e) { msg.textContent = "センサーの許可でエラー: " + e.message; return; }
-  buildList(); show("select");
+  buildList(); show("select"); playSong("menu");
 });
 
 function fmt(t){ return t.toFixed(1) + "秒"; }
@@ -336,14 +489,15 @@ function buildList(){
     b.className = "stg" + (ok ? "" : " lock") + (r && r.clear ? " clear" : "");
     b.innerHTML = `<div class="no">${ok ? i+1 : "🔒"}</div><div><div class="nm">${s.name}</div><div class="ds">${s.desc}</div></div>` +
       `<div class="rc">${r && r.clear ? `ベスト <b>${fmt(r.best)}</b><br>★${r.stars}/${total}` : (ok ? "まだクリアしていない" : "前をクリアで解放")}</div>`;
-    b.addEventListener("click", () => { if (ok) { initAudio(); startStage(i); } });
+    b.addEventListener("click", () => { if (ok) { initAudio(); sfx.click(); startStage(i); } });
     box.appendChild(b);
   });
   updSnd();
 }
-document.getElementById("sndBtn2").addEventListener("click", () => { soundOn = !soundOn; save.sound = soundOn; persist(); updSnd(); initAudio(); });
+document.getElementById("sndBtn2").addEventListener("click", () => { initAudio(); soundMode = (soundMode + 2) % 3; save.soundMode = soundMode; persist(); updSnd();
+  if (soundMode === 2) { const w = wantSong; curSong = null; playSong(w || "menu"); } else stopSongNow(); sfx.click(); });
 document.getElementById("resetBtn").addEventListener("click", () => {
-  if (confirm("全ステージの記録を消しますか?")) { const s = save.sound; save = { sound: s }; persist(); buildList(); }
+  if (confirm("全ステージの記録を消しますか?")) { const s = save.soundMode; save = { soundMode: s }; persist(); buildList(); }
 });
 function countStars(map){ return map.join("").split("*").length - 1; }
 
@@ -392,7 +546,7 @@ function startStage(i){
   show("play"); resize(); level();
   g.camY = targetCam();
   toast("よーい…", 900);
-  setTimeout(() => { if (G === g && g.state === "ready") { level(); g.state = "play"; toast("スタート!", 700); } }, 900);
+  setTimeout(() => { if (G === g && g.state === "ready") { level(); g.state = "play"; toast("スタート!", 700); sfx.start(); playSong(stageSong(g.i)); } }, 900);
   updHud();
 }
 function cell(c, r){ if (!G || r < 0 || c < 0 || r >= G.rows || c >= G.cols) return "#"; return G.grid[r][c]; }
@@ -486,7 +640,7 @@ function miss(kind){
   if (kind === "fall") { sfx.fall(); toast("あ〜れ〜", 800); } else { sfx.hit(); toast("いたっ!", 800); }
 }
 function clearStage(){
-  const g = G; g.state = "clear"; g.stateT = 0; sfx.clear();
+  const g = G; g.state = "clear"; g.stateT = 0; stopSongNow(); wantSong = null; sfx.clear();
   const prev = rec(g.i), isBest = !prev || !prev.clear || g.t < prev.best;
   save["s" + g.i] = { clear: true, best: isBest ? g.t : prev.best, stars: Math.max(g.got, prev ? prev.stars || 0 : 0),
     plays: (prev ? prev.plays || 0 : 0) + 1 };
@@ -501,8 +655,8 @@ function clearStage(){
 }
 document.getElementById("nextBtn").addEventListener("click", () => startStage(G.i + 1));
 document.getElementById("retryBtn").addEventListener("click", () => startStage(G.i));
-document.getElementById("backBtn").addEventListener("click", () => { G = null; buildList(); show("select"); });
-document.getElementById("quitBtn").addEventListener("click", () => { G = null; buildList(); show("select"); });
+document.getElementById("backBtn").addEventListener("click", () => { G = null; buildList(); show("select"); playSong("menu"); });
+document.getElementById("quitBtn").addEventListener("click", () => { G = null; buildList(); show("select"); playSong("menu"); });
 document.getElementById("levelBtn").addEventListener("click", () => { level(); toast("水平にしました", 700); });
 
 /* ===== 描画 ===== */
