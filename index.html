@@ -120,7 +120,7 @@
 "use strict";
 /* ===== ステージ =====
   # 壁   . 床   o 穴   ~ 氷   * スター   S スタート   G ワープスター
-  B バンパー   w ワドルディ(横に往復)
+  B バンパー   w ワドルディ(横に往復)   W ワドルディ(縦に往復)
   g ゴルドー(その場でふわふわ)   h ゴルドー(左右に往復)   v ゴルドー(上下に往復)  ※ゴルドーは穴の上も浮いて通る */
 const STAGES = [
   { name:"はじめての草原", desc:"まずは転がしてみよう", map:[
@@ -436,6 +436,28 @@ const STAGES = [
     "#oooo...oooooo#",
     "#ooooooGoooooo#",
     "###############"]},
+  { group:"easy", needStars:true, name:"ワドルディだらけの原っぱ", desc:"ワドルディをよけて★を全部あつめるとゴールが開く", map:[
+    "###############",
+    "#S.....w......#",
+    "#..##.....##..#",
+    "#..##..*..##*.#",
+    "#......w......#",
+    "#.*.W.....W...#",
+    "#.....###.....#",
+    "#..w..#*#..w..#",
+    "#.....#.#.....#",
+    "#.*.......W.*.#",
+    "#...w.....w...#",
+    "#.##...*...##.#",
+    "#.##.W...W.##.#",
+    "#......w......#",
+    "#.*.........*.#",
+    "#....w...w....#",
+    "#..##.....##..#",
+    "#*.##.W...##.*#",
+    "#......w......#",
+    "#......G......#",
+    "###############"]},
 ];
 STAGES.forEach(s => { s.group = s.group || "normal"; });
 const GROUPS = [
@@ -729,7 +751,11 @@ function startStage(i){
     if (ch === "S") { g.sx = c + .5; g.sy = r + .5; grid[r][c] = "."; }
     else if (ch === "G") { g.gx = c + .5; g.gy = r + .5; grid[r][c] = "."; }
     else if (ch === "*") { g.stars.push({ x: c + .5, y: r + .5, got: false }); grid[r][c] = "."; }
-    else if (ch === "w") { g.enemies.push({ x: c + .5, y: r + .5, dir: 1, sp: 1.6 + i * 0.12, ph: Math.random() * 6 }); grid[r][c] = "."; }
+    else if (ch === "w" || ch === "W") {
+      // かんたんコースはゆっくり。ほかは後ろのステージほど少し速い
+      const sp = s.group === "easy" ? 1.3 : 1.6 + Math.min(i, 15) * 0.12;
+      g.enemies.push({ x: c + .5, y: r + .5, axis: ch === "W" ? "y" : "x", dir: (r + c) % 2 ? 1 : -1, sp, ph: Math.random() * 6 }); grid[r][c] = ".";
+    }
     else if (ch === "B") { g.bumpers.push({ x: c + .5, y: r + .5, hit: 0 }); grid[r][c] = "."; }
     else if (ch === "g" || ch === "h" || ch === "v") {
       g.gordos.push({ kind: ch, c, r, x: c + .5, y: r + .5, ph: Math.random() * 6 });
@@ -747,6 +773,7 @@ function startStage(i){
     }
   }
   g.total = g.stars.length; g.x = g.sx; g.y = g.sy;
+  g.need = s.needStars ? g.total : 0; g.goalMsgT = 0;   // ★を全部あつめるとゴールが開くコース
   G = g;
   if (window.R3) R3.build(g); else pendingBuild = g;
   document.getElementById("hName").textContent = stageLabel(i) + ". " + s.name;
@@ -779,9 +806,19 @@ function step(dt){
   for (const e of g.enemies) {
     e.ph += dt * e.sp * 4.2;   // 歩く速さに合わせて足を運ぶ
     e.bump = Math.max(0, (e.bump || 0) - dt * 2.5);
-    const nx = e.x + e.dir * e.sp * dt, edge = nx + e.dir * 0.4;
-    if (!walkable(cell(Math.floor(edge), Math.floor(e.y))) || g.bumpers.some(b => Math.abs(b.x - Math.floor(edge) - .5) < .1 && Math.abs(b.y - e.y) < .1)) e.dir *= -1;
-    else e.x = nx;
+    const ax = e.axis === "y" ? 0 : 1, ay = 1 - ax;
+    const nx = e.x + ax * e.dir * e.sp * dt, ny = e.y + ay * e.dir * e.sp * dt;
+    const ex = Math.floor(nx + ax * e.dir * 0.4), ey = Math.floor(ny + ay * e.dir * 0.4);
+    if (!walkable(cell(ex, ey)) || g.bumpers.some(b => Math.abs(b.x - ex - .5) < .1 && Math.abs(b.y - ey - .5) < .1)) e.dir *= -1;
+    else { e.x = nx; e.y = ny; }
+  }
+  // ワドルディ同士がぶつかったら、相手のほうへ歩いていた子が向きを変える
+  for (let a = 0; a < g.enemies.length; a++) for (let b = a + 1; b < g.enemies.length; b++) {
+    const A = g.enemies[a], Bq = g.enemies[b], dx = Bq.x - A.x, dy = Bq.y - A.y;
+    if (dx * dx + dy * dy > 0.6 * 0.6) continue;
+    const toward = (e, sx, sy) => (e.axis === "y" ? sy : sx) * e.dir > 0;
+    if (toward(A, dx, dy)) A.dir *= -1;
+    if (toward(Bq, -dx, -dy)) Bq.dir *= -1;
   }
   for (const b of g.bumpers) b.hit = Math.max(0, b.hit - dt * 4);
   // ゴルドー(なめらかに往復。端でゆっくりになる)
@@ -802,13 +839,21 @@ function step(dt){
     g.spin += g.vx * dt / R * 0.5;
     g.squash = Math.max(0, g.squash - dt * 4);
     // スター
-    for (const s of g.stars) if (!s.got && Math.hypot(s.x - g.x, s.y - g.y) < R + 0.3) { s.got = true; g.got++; sfx.star(); }
+    for (const s of g.stars) if (!s.got && Math.hypot(s.x - g.x, s.y - g.y) < R + 0.3) {
+      s.got = true; g.got++; sfx.star();
+      if (g.need && g.got === g.need) { toast("ワープスターがでた!", 1400); sfx.start(); }
+      else if (g.need) toast("★あと" + (g.need - g.got) + "こ", 700);
+    }
+    g.goalMsgT = Math.max(0, g.goalMsgT - dt);
     // ゴルドー(無敵。トゲに触れたらミス)
     if (!g.inv) for (const o of g.gordos) if (Math.hypot(o.x - g.x, o.y - g.y) < R + 0.4) { miss("hit"); return; }
     // 穴
     if (cell(Math.floor(g.x), Math.floor(g.y)) === "o") { g.fx = Math.floor(g.x) + .5; g.fy = Math.floor(g.y) + .5; miss("fall"); return; }
     // ゴール
-    if (Math.hypot(g.gx - g.x, g.gy - g.y) < 0.42) { clearStage(); return; }
+    if (Math.hypot(g.gx - g.x, g.gy - g.y) < 0.42) {
+      if (g.got >= g.need) { clearStage(); return; }
+      if (!g.goalMsgT) { toast("★をあと" + (g.need - g.got) + "こ あつめてね!", 1200); g.goalMsgT = 1.5; }
+    }
     updHud();
   } else if (g.state === "fall" || g.state === "hit") {
     if (g.state === "fall") { g.x += (g.fx - g.x) * Math.min(1, dt * 8); g.y += (g.fy - g.y) * Math.min(1, dt * 8); }
@@ -845,12 +890,12 @@ function collide(){
     const dx = g.x - e.x, dy = g.y - e.y, d = Math.hypot(dx, dy), rr = R + 0.3;
     if (d < rr && d > 1e-6) {
       const nx = dx / d, ny = dy / d; g.x = e.x + nx * rr; g.y = e.y + ny * rr;
-      const ex = e.dir * e.sp, rvx = g.vx - ex, rvy = g.vy, vn = rvx * nx + rvy * ny;
+      const evx = e.axis === "y" ? 0 : e.dir * e.sp, evy = e.axis === "y" ? e.dir * e.sp : 0, rvx = g.vx - evx, rvy = g.vy - evy, vn = rvx * nx + rvy * ny;
       if (vn < 0) { g.vx -= 1.5 * vn * nx; g.vy -= 1.5 * vn * ny; }
       g.vx += nx * 1.2; g.vy += ny * 1.2;
       if (!(e.bump > 0.3)) { sfx.wall(Math.max(4, -vn)); g.squash = 0.6; }
       e.bump = 1;
-      if (e.dir * nx > 0) e.dir *= -1;                       // カービィのほうへ歩いていたら引き返す
+      if (e.dir * (e.axis === "y" ? ny : nx) > 0) e.dir *= -1; // カービィのほうへ歩いていたら引き返す
     }
   }
 }
@@ -1136,7 +1181,8 @@ function build(g){
   base.position.set(cx, -2.95, cz); board.add(base);
 
   // ゴール
-  const goal = new THREE.Mesh(GEO.goal, M.goal); goal.castShadow = true;
+  const goalMat = M.goal.clone(); goalMat.transparent = true;
+  const goal = new THREE.Mesh(GEO.goal, goalMat); goal.castShadow = true;
   goal.position.set(g.gx, 0.45, g.gy); goal.rotation.x = -0.35; board.add(goal);
   const glow = new THREE.PointLight("#ffe066", 3, 3.5, 1.5); glow.position.set(g.gx, 0.8, g.gy); board.add(glow);
   // スター
@@ -1157,7 +1203,7 @@ function build(g){
     upper.add(body);
     const arms = [-1, 1].map(sd => { const a = new THREE.Mesh(GEO.foot, M.waddleArm); a.scale.set(0.085, 0.075, 0.1); a.position.set(sd * 0.32, 0.34, 0.02); a.castShadow = true; upper.add(a); return a; });
     const feet = [-1, 1].map(sd => { const f = new THREE.Mesh(GEO.foot, M.waddleFoot); f.scale.set(0.12, 0.07, 0.17); f.position.set(sd * 0.14, 0.07, 0.03); f.castShadow = true; grp.add(f); return f; });
-    grp.rotation.y = e.dir * 1.25; board.add(grp); return { grp, upper, arms, feet };
+    grp.rotation.y = e.axis === "y" ? (e.dir > 0 ? 0.25 : Math.PI - 0.25) : e.dir * 1.25; board.add(grp); return { grp, upper, arms, feet };
   });
   // ゴルドー: 藍色の球、正面に大きな目2つ、まわりに放射状の金色のトゲ8本(見本の絵の配置)
   const gordos = g.gordos.map(() => {
@@ -1268,6 +1314,10 @@ function render(g, dt, tx, ty){
   o.goal.rotation.y = t * 1.3;
   o.goal.position.y = 0.45 + Math.sin(t * 2.5) * 0.06 + (g.state === "clear" ? Math.min(1, g.stateT / 1.2) * 1.6 : 0);
   o.glow.intensity = 2.5 + Math.sin(t * 4) * 0.8;
+  const locked = g.need && g.got < g.need;                    // ★を集めきるまでは半透明で小さめ
+  o.goal.material.opacity += ((locked ? 0.3 : 1) - o.goal.material.opacity) * Math.min(1, dt * 4);
+  o.goal.scale.setScalar(o.goal.scale.x + ((locked ? 0.7 : 1) - o.goal.scale.x) * Math.min(1, dt * 4));
+  if (locked) o.glow.intensity = 0.4;
   g.stars.forEach((st, i) => {
     const m = o.stars[i];
     if (st.got) { if (m.visible) { m.userData.p = (m.userData.p || 0) + dt * 3; m.position.y = 0.32 + m.userData.p; m.scale.setScalar(Math.max(0, 1 - m.userData.p)); if (m.userData.p >= 1) m.visible = false; } }
@@ -1278,7 +1328,8 @@ function render(g, dt, tx, ty){
     const en = o.enemies[i], p = e.ph;
     en.grp.position.set(e.x, 0, e.y);
     // 進む向きへくるっと振り返る(真横より少しカメラ寄りを向く)
-    en.grp.rotation.y += (e.dir * 1.25 - en.grp.rotation.y) * Math.min(1, dt * 9);
+    const face = e.axis === "y" ? (e.dir > 0 ? 0.25 : Math.PI - 0.25) : e.dir * 1.25;   // 縦歩きは手前/奥を向く
+    en.grp.rotation.y += (face - en.grp.rotation.y) * Math.min(1, dt * 9);
     // 足を左右交互に踏み出す(前後に動かし、前に出す足を持ち上げる)
     en.feet.forEach((f, k) => {
       const q2 = Math.sin(p + k * Math.PI);
